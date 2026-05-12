@@ -15,8 +15,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-# Set to your channel username (e.g. "@mychannel") via Railway env var, or leave empty to disable
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "")
 
 SUPPORTED = [
@@ -26,18 +24,10 @@ SUPPORTED = [
 ]
 
 PLATFORM_NAMES = {
-    'instagram.com': 'Instagram',
-    'tiktok.com': 'TikTok',
-    'vm.tiktok.com': 'TikTok',
-    'twitter.com': 'Twitter',
-    'x.com': 'Twitter/X',
-    'youtube.com': 'YouTube',
-    'youtu.be': 'YouTube',
-    'facebook.com': 'Facebook',
-    'fb.watch': 'Facebook',
-    'reddit.com': 'Reddit',
-    'linkedin.com': 'LinkedIn',
-    'pinterest.com': 'Pinterest',
+    'instagram.com': 'Instagram', 'tiktok.com': 'TikTok', 'vm.tiktok.com': 'TikTok',
+    'twitter.com': 'Twitter', 'x.com': 'Twitter', 'youtube.com': 'YouTube',
+    'youtu.be': 'YouTube', 'facebook.com': 'Facebook', 'fb.watch': 'Facebook',
+    'reddit.com': 'Reddit', 'linkedin.com': 'LinkedIn', 'pinterest.com': 'Pinterest',
 }
 
 def get_platform(url):
@@ -54,33 +44,30 @@ async def check_membership(user_id, context):
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
         logger.warning(f"Membership check failed: {e}")
-        return True  # allow if check fails
+        return True
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    logger.info(f"/start from user {user.id} ({user.username})")
     await update.message.reply_text(
         "📥 *Video Downloader Bot*\n\n"
-        "Send me a video link from:\n"
-        "• Instagram Reels\n"
-        "• TikTok\n"
-        "• YouTube Shorts\n"
-        "• Facebook Reels\n"
-        "• Twitter/X\n"
-        "• Reddit, Pinterest, LinkedIn\n\n"
-        "Just paste the link and I'll download it for you! 🚀",
+        "Send a video link from:\n"
+        "• Instagram • TikTok • YouTube\n"
+        "• Facebook • Twitter/X\n"
+        "• Reddit • Pinterest • LinkedIn\n\n"
+        "Just paste the link! 🚀",
         parse_mode='Markdown'
     )
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     user_id = update.message.from_user.id
-    logger.info(f"Received URL from {user_id}: {url}")
-
+    
+    # Start timer when user sends link
+    start_time = time.time()
+    
     if not any(d in url for d in SUPPORTED):
         await update.message.reply_text(
-            "❌ Please send a valid video link!\n\n"
-            "Supported: Instagram, TikTok, YouTube, Facebook, Twitter/X, Reddit, LinkedIn, Pinterest"
+            "❌ Send a valid link!\n\n"
+            "Supported: Instagram, TikTok, YouTube, Facebook, Twitter, Reddit, LinkedIn, Pinterest"
         )
         return
 
@@ -91,23 +78,35 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📣 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
             )]]
             await update.message.reply_text(
-                "❌ You must join our channel to use this bot!\n\n"
-                "🔔 Click below to join, then try again.",
+                "❌ Join our channel first!\n🔔 Click below:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
 
     platform = get_platform(url)
-    start_time = time.time()
-    status_msg = await update.message.reply_text("⏳ Downloading... Please wait.")
-
+    
+    # Validate link first before showing "downloading"
+    status_msg = await update.message.reply_text("⏳ Checking link...")
+    
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                raise ValueError("Invalid")
+    except:
+        await status_msg.edit_text(
+            "❌ This link is invalid, private, or unsupported.\n"
+            "Check the URL and try again!"
+        )
+        return
+    
+    # Now download
+    await status_msg.edit_text("⏳ Downloading your video... Please wait.")
+    
     with tempfile.TemporaryDirectory() as tmpdir:
-        output_template = os.path.join(tmpdir, 'video.%(ext)s')
-
         ydl_opts = {
-            'outtmpl': output_template,
-            'format': 'bestvideo[ext=mp4][filesize<45M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<45M]/best[filesize<45M]/best',
-            'merge_output_format': 'mp4',
+            'outtmpl': f'{tmpdir}/video.%(ext)s',
+            'format': 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best',
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
@@ -118,85 +117,56 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.extract_info(url, download=True)
 
-            # Find the downloaded file
-            filename = None
-            for f in os.listdir(tmpdir):
-                if f.startswith('video.'):
-                    filename = os.path.join(tmpdir, f)
-                    break
-
-            if not filename or not os.path.exists(filename):
-                raise FileNotFoundError("Downloaded file not found")
-
+            files = [f for f in os.listdir(tmpdir) if f.startswith('video.')]
+            if not files:
+                raise FileNotFoundError("No file")
+            
+            filename = os.path.join(tmpdir, files[0])
             file_size_mb = os.path.getsize(filename) / (1024 * 1024)
-            elapsed = round(time.time() - start_time, 1)
-            logger.info(f"Downloaded {filename} ({file_size_mb:.1f}MB) in {elapsed}s")
 
             if file_size_mb > 49:
-                await status_msg.edit_text(
-                    "❌ Video is too large to send via Telegram (>50MB).\nTry a shorter video!"
-                )
+                await status_msg.edit_text("❌ Video too large (>50MB). Try shorter!")
                 return
 
-            await status_msg.edit_text("✅ Downloaded! Sending now...")
+            await status_msg.edit_text("✅ Video downloaded! Sending now...")
 
-            caption = (
-                f"📱 *{platform}*\n"
-                f"⏱ Downloaded in {elapsed}s\n"
-                f"🤖 @InstaReelDownloaderBot"
-            )
+            # Total time from link sent to video sent
+            elapsed = round(time.time() - start_time, 1)
+            
+            caption = f"📱 *{platform}*\n⏱ Time taken: {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
 
             with open(filename, 'rb') as f:
-                await update.message.reply_video(
-                    f,
-                    caption=caption,
-                    parse_mode='Markdown',
-                    supports_streaming=True
-                )
+                await update.message.reply_video(f, caption=caption, parse_mode='Markdown')
 
             await status_msg.delete()
 
-        except FileNotFoundError as e:
-            logger.error(f"File error: {e}")
-            await status_msg.edit_text(
-                "❌ Download failed — the video could not be saved.\n"
-                "The link may be private or region-restricted. Try another link!"
-            )
         except Exception as e:
-            logger.error(f"Download error for {url}: {e}")
+            logger.error(f"Error: {e}")
             await status_msg.edit_text(
-                "❌ Failed to download this video.\n"
-                "The link may be private, expired, or unsupported. Try another link!"
+                "❌ Download failed!\nVideo may be private, region-locked, or too large. Try another!"
             )
 
-# Health check server — Railway requires a port to be bound
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-
     def log_message(self, format, *args):
         pass
 
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    logger.info(f"Health server on port {port}")
-    server.serve_forever()
+    HTTPServer(('0.0.0.0', port), HealthHandler).serve_forever()
 
 def main():
     if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN environment variable is not set!")
-
+        raise ValueError("BOT_TOKEN not set!")
     threading.Thread(target=run_health_server, daemon=True).start()
-
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-
     logger.info("Bot started!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
