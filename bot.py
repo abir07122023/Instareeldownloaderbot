@@ -36,6 +36,32 @@ def get_platform(url):
             return name
     return "Video"
 
+def get_ydl_opts(platform, tmpdir):
+    """Platform-specific yt-dlp options for better reliability"""
+    base_opts = {
+        'outtmpl': f'{tmpdir}/video.%(ext)s',
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 60,  # Longer timeout for long videos
+        'retries': 5,
+        'fragment_retries': 5,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+    }
+    
+    # Platform-specific formats
+    if 'Instagram' in platform:
+        base_opts['format'] = 'best[ext=mp4][filesize<48M]/best[filesize<48M]'
+    elif 'Facebook' in platform:
+        base_opts['format'] = 'best[ext=mp4][filesize<48M]/bestvideo[ext=mp4]+bestaudio/best'
+    elif 'TikTok' in platform:
+        base_opts['format'] = 'best[ext=mp4]'
+    else:
+        base_opts['format'] = 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best'
+    
+    return base_opts
+
 async def check_membership(user_id, context):
     if not CHANNEL_USERNAME:
         return True
@@ -60,8 +86,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     user_id = update.message.from_user.id
-    
-    # Start timer when user sends link
     start_time = time.time()
     
     if not any(d in url for d in SUPPORTED):
@@ -84,67 +108,81 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     platform = get_platform(url)
-    
-    # Validate link first before showing "downloading"
-    status_msg = await update.message.reply_text("⏳ Checking link...")
-    
-    try:
-        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                raise ValueError("Invalid")
-    except:
-        await status_msg.edit_text(
-            "❌ This link is invalid, private, or unsupported.\n"
-            "Check the URL and try again!"
-        )
-        return
-    
-    # Now download
-    await status_msg.edit_text("⏳ Downloading your video... Please wait.")
+    status_msg = await update.message.reply_text("⏳ Processing your link...")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        ydl_opts = {
-            'outtmpl': f'{tmpdir}/video.%(ext)s',
-            'format': 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best',
-            'quiet': True,
-            'no_warnings': True,
-            'socket_timeout': 30,
-            'retries': 3,
-        }
+        ydl_opts = get_ydl_opts(platform, tmpdir)
+        
+        # Try download with retries
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                if attempt > 0:
+                    await status_msg.edit_text(f"⏳ Retrying... (Attempt {attempt + 1}/{max_attempts})")
+                    time.sleep(2)  # Brief pause between retries
+                else:
+                    await status_msg.edit_text("⏳ Downloading your video... Please wait.")
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if not info:
+                        raise ValueError("No video info")
+                
+                # Find downloaded file
+                files = [f for f in os.listdir(tmpdir) if f.startswith('video.')]
+                if not files:
+                    raise FileNotFoundError("Download completed but file not found")
+                
+                filename = os.path.join(tmpdir, files[0])
+                file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+                
+                logger.info(f"Downloaded {platform} video: {file_size_mb:.1f}MB")
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(url, download=True)
+                if file_size_mb > 49:
+                    await status_msg.edit_text(
+                        "❌ Video is too large (>50MB).\n"
+                        "Telegram bots can only send videos up to 50MB. Try a shorter video!"
+                    )
+                    return
 
-            files = [f for f in os.listdir(tmpdir) if f.startswith('video.')]
-            if not files:
-                raise FileNotFoundError("No file")
-            
-            filename = os.path.join(tmpdir, files[0])
-            file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+                await status_msg.edit_text("✅ Video downloaded! Sending now...")
+                elapsed = round(time.time() - start_time, 1)
+                
+                caption = f"📱 *{platform}*\n⏱ Time taken: {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
 
-            if file_size_mb > 49:
-                await status_msg.edit_text("❌ Video too large (>50MB). Try shorter!")
-                return
+                with open(filename, 'rb') as f:
+                    await update.message.reply_video(
+                        f, 
+                        caption=caption, 
+                        parse_mode='Markdown',
+                        supports_streaming=True,
+                        read_timeout=60,
+                        write_timeout=60
+                    )
 
-            await status_msg.edit_text("✅ Video downloaded! Sending now...")
-
-            # Total time from link sent to video sent
-            elapsed = round(time.time() - start_time, 1)
-            
-            caption = f"📱 *{platform}*\n⏱ Time taken: {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
-
-            with open(filename, 'rb') as f:
-                await update.message.reply_video(f, caption=caption, parse_mode='Markdown')
-
-            await status_msg.delete()
-
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            await status_msg.edit_text(
-                "❌ Download failed!\nVideo may be private, region-locked, or too large. Try another!"
-            )
+                await status_msg.delete()
+                return  # Success! Exit function
+                
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed for {url}: {e}")
+                
+                if attempt == max_attempts - 1:
+                    # Final attempt failed
+                    error_msg = "❌ Download failed after multiple attempts!\n\n"
+                    
+                    if 'age' in str(e).lower() or 'login' in str(e).lower():
+                        error_msg += "This video is age-restricted or private.\n"
+                    elif 'geo' in str(e).lower() or 'region' in str(e).lower():
+                        error_msg += "This video is region-blocked.\n"
+                    elif 'copyright' in str(e).lower():
+                        error_msg += "This video has copyright restrictions.\n"
+                    else:
+                        error_msg += "The video may be:\n• Private or deleted\n• Age-restricted (18+)\n• Region-blocked\n• Too large\n\n"
+                    
+                    error_msg += "Try another link!"
+                    await status_msg.edit_text(error_msg)
+                # Otherwise continue to next attempt
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
