@@ -8,10 +8,7 @@ import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -36,40 +33,13 @@ def get_platform(url):
             return name
     return "Video"
 
-def get_ydl_opts(platform, tmpdir):
-    """Platform-specific yt-dlp options for better reliability"""
-    base_opts = {
-        'outtmpl': f'{tmpdir}/video.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-        'socket_timeout': 60,  # Longer timeout for long videos
-        'retries': 5,
-        'fragment_retries': 5,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-    }
-    
-    # Platform-specific formats
-    if 'Instagram' in platform:
-        base_opts['format'] = 'best[ext=mp4][filesize<48M]/best[filesize<48M]'
-    elif 'Facebook' in platform:
-        base_opts['format'] = 'best[ext=mp4][filesize<48M]/bestvideo[ext=mp4]+bestaudio/best'
-    elif 'TikTok' in platform:
-        base_opts['format'] = 'best[ext=mp4]'
-    else:
-        base_opts['format'] = 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best'
-    
-    return base_opts
-
 async def check_membership(user_id, context):
     if not CHANNEL_USERNAME:
         return True
     try:
         member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ['member', 'administrator', 'creator']
-    except Exception as e:
-        logger.warning(f"Membership check failed: {e}")
+    except:
         return True
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,7 +49,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Instagram • TikTok • YouTube\n"
         "• Facebook • Twitter/X\n"
         "• Reddit • Pinterest • LinkedIn\n\n"
-        "Just paste the link! 🚀",
+        "Unlimited & Free! 🚀",
         parse_mode='Markdown'
     )
 
@@ -91,7 +61,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not any(d in url for d in SUPPORTED):
         await update.message.reply_text(
             "❌ Send a valid link!\n\n"
-            "Supported: Instagram, TikTok, YouTube, Facebook, Twitter, Reddit, LinkedIn, Pinterest"
+            "Supported: Instagram, TikTok, YouTube, Facebook, Twitter, Reddit"
         )
         return
 
@@ -102,99 +72,98 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📣 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
             )]]
             await update.message.reply_text(
-                "❌ Join our channel first!\n🔔 Click below:",
+                "❌ Join our channel first!",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
 
     platform = get_platform(url)
-    status_msg = await update.message.reply_text("⏳ Processing your link...")
+    status_msg = await update.message.reply_text("⏳ Processing...")
     
-    with tempfile.TemporaryDirectory() as tmpdir:
-        ydl_opts = get_ydl_opts(platform, tmpdir)
+    ydl_opts = {
+        'format': 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best',
+        'quiet': True,
+        'no_warnings': True,
+    }
+    
+    try:
+        # Extract video info WITHOUT downloading
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
         
-        # Try download with retries
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                if attempt > 0:
-                    await status_msg.edit_text(f"⏳ Retrying... (Attempt {attempt + 1}/{max_attempts})")
-                    time.sleep(2)  # Brief pause between retries
-                else:
-                    await status_msg.edit_text("⏳ Downloading your video... Please wait.")
+        # Get direct video URL
+        video_url = info.get('url')
+        title = info.get('title', 'Video')
+        
+        if not video_url:
+            raise ValueError("No video URL found")
+        
+        await status_msg.edit_text("✅ Sending video...")
+        elapsed = round(time.time() - start_time, 1)
+        caption = f"📱 *{platform}*\n⏱ {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
+        
+        # Method 1: Try sending direct URL (FAST - no download)
+        try:
+            await update.message.reply_video(
+                video_url,
+                caption=caption,
+                parse_mode='Markdown',
+                read_timeout=30,
+                write_timeout=30
+            )
+            await status_msg.delete()
+            logger.info(f"✅ Direct URL worked for {platform}")
+            return
+            
+        except Exception as url_error:
+            logger.warning(f"Direct URL failed: {url_error}, trying download method...")
+            
+            # Method 2: Fallback - Download to server (SLOW but reliable)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                ydl_opts['outtmpl'] = f'{tmpdir}/video.%(ext)s'
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    
-                    if not info:
-                        raise ValueError("No video info")
+                    ydl.extract_info(url, download=True)
                 
-                # Find downloaded file
                 files = [f for f in os.listdir(tmpdir) if f.startswith('video.')]
                 if not files:
-                    raise FileNotFoundError("Download completed but file not found")
+                    raise FileNotFoundError("Download failed")
                 
                 filename = os.path.join(tmpdir, files[0])
-                file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+                file_size = os.path.getsize(filename) / (1024 * 1024)
                 
-                logger.info(f"Downloaded {platform} video: {file_size_mb:.1f}MB")
-
-                if file_size_mb > 49:
-                    await status_msg.edit_text(
-                        "❌ Video is too large (>50MB).\n"
-                        "Telegram bots can only send videos up to 50MB. Try a shorter video!"
-                    )
+                if file_size > 49:
+                    await status_msg.edit_text("❌ Video too large (>50MB)")
                     return
-
-                await status_msg.edit_text("✅ Video downloaded! Sending now...")
-                elapsed = round(time.time() - start_time, 1)
                 
-                caption = f"📱 *{platform}*\n⏱ Time taken: {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
-
                 with open(filename, 'rb') as f:
                     await update.message.reply_video(
-                        f, 
-                        caption=caption, 
+                        f,
+                        caption=caption,
                         parse_mode='Markdown',
-                        supports_streaming=True,
-                        read_timeout=60,
-                        write_timeout=60
+                        read_timeout=60
                     )
-
+                
                 await status_msg.delete()
-                return  # Success! Exit function
-                
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed for {url}: {e}")
-                
-                if attempt == max_attempts - 1:
-                    # Final attempt failed
-                    error_msg = "❌ Download failed after multiple attempts!\n\n"
-                    
-                    if 'age' in str(e).lower() or 'login' in str(e).lower():
-                        error_msg += "This video is age-restricted or private.\n"
-                    elif 'geo' in str(e).lower() or 'region' in str(e).lower():
-                        error_msg += "This video is region-blocked.\n"
-                    elif 'copyright' in str(e).lower():
-                        error_msg += "This video has copyright restrictions.\n"
-                    else:
-                        error_msg += "The video may be:\n• Private or deleted\n• Age-restricted (18+)\n• Region-blocked\n• Too large\n\n"
-                    
-                    error_msg += "Try another link!"
-                    await status_msg.edit_text(error_msg)
-                # Otherwise continue to next attempt
+                logger.info(f"✅ Download method worked for {platform}")
+    
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await status_msg.edit_text(
+            "❌ Failed!\n"
+            "Video may be private, age-restricted, or region-blocked."
+        )
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-    def log_message(self, format, *args):
+    def log_message(self, *args):
         pass
 
 def run_health_server():
-    port = int(os.environ.get("PORT", 8080))
-    HTTPServer(('0.0.0.0', port), HealthHandler).serve_forever()
+    HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), HealthHandler).serve_forever()
 
 def main():
     if not BOT_TOKEN:
