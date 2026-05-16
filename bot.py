@@ -11,13 +11,24 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-ADMIN_ID = 1234567890  # REPLACE WITH YOUR TELEGRAM USER ID
+ADMIN_ID = 6294267891 
+LOG_CHANNEL_ID =  -1003744819617
 
 # Track users
 def log_user(user_id, username):
     try:
         with open('/tmp/users.txt', 'a') as f:
             f.write(f"{user_id}|{username}\n")
+    except:
+        pass
+
+
+async def log_to_channel(context, user_id, username, platform, url):
+    try:
+        await context.bot.send_message(
+            LOG_CHANNEL_ID,
+            f"📊 New download:\n👤 {username} ({user_id})\n{platform}: {url}"
+        )
     except:
         pass
 
@@ -54,13 +65,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.from_user.username or "no_username"
     log_user(user_id, username)
     
-    await update.message.reply_text(
-        "📥 *Video Downloader Bot*\n\n"
-        "📷 Instagram • 🎵 TikTok • ▶️ YouTube\n"
-        "👍 Facebook • 🐦 Twitter\n\n"
-        "Send any video link! 🚀",
-        parse_mode='Markdown'
-    )
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -111,7 +115,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             platform = get_platform(url)
             icon = PLATFORM_ICONS.get(platform, '📱')
             elapsed = round(time.time() - start_time, 1)
-            caption = f"{icon} *{platform}*\n⏱ {elapsed}s\n🤖 @Insta_Reel_Downloaderbot"
+          caption = f"📱 *{platform}*\n⏱️ {elapsed}s 🔥\n🤖 @Insta_Reel_Downloaderbot"
             
             await status.edit_text("✅ Sending...")
             
@@ -123,7 +127,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     read_timeout=60,
                     write_timeout=60
                 )
-            
+            await log_to_channel(context, user_id, username, platform, url)
             await status.delete()
             
         except Exception as e:
