@@ -76,8 +76,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
-platform = get_platform(url)
-    status_msg = await update.message.reply_text("⏳ Processing...")
+    platform = get_platform(url)
+    status_msg =await update.message.reply_text("⏳ Processing...")
     
     ydl_opts = {
         'format': 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best',
