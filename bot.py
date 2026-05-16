@@ -100,7 +100,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await status_msg.edit_text("✅ Sending video...")
         elapsed = round(time.time() - start_time, 1)
-        caption = f"📱 *{platform}*\n⏱ {elapsed}s 🔥\n🤖 @Insta_Reel_Downloaderbot"
+        caption = f"📱 *{platform}*\n⏱ {elapsed}s 🔥\n🤖 https://t.me/Insta_Reel_Downloaderbot"
         
         # Method 1: Try sending direct URL (FAST - no download)
         try:
