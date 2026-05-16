@@ -9,7 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "")
@@ -76,8 +76,9 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
+
     platform = get_platform(url)
-    status_msg =await update.message.reply_text("⏳ Processing...")
+    status_msg = await update.message.reply_text("⏳ Processing...")
     
     ydl_opts = {
         'format': 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best',
@@ -99,7 +100,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await status_msg.edit_text("✅ Sending video...")
         elapsed = round(time.time() - start_time, 1)
-        caption = f"📱 *{platform}*\n⏱️ {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
+        caption = f"📱 *{platform}*\n⏱ {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
         
         # Method 1: Try sending direct URL (FAST - no download)
         try:
@@ -174,7 +175,7 @@ def main():
     logger.info("Bot started!")
     app.run_polling()
 
-if name == 'main':
+if __name__ == '__main__':
     main()
 
 
