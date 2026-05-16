@@ -76,7 +76,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
-            platform = get_platform(url)
+platform = get_platform(url)
     status_msg = await update.message.reply_text("⏳ Processing...")
     
     ydl_opts = {
@@ -176,6 +176,5 @@ def main():
 
 if name == 'main':
     main()
-
 
 
