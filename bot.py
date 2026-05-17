@@ -20,12 +20,9 @@ def log_user(user_id, username):
     except:
         pass
 
-async def log_to_channel(context, user_id, username, platform, url):
+async def log_to_channel(context, message):
     try:
-        await context.bot.send_message(
-            LOG_CHANNEL_ID,
-            f"📊 New download:\n👤 {username} ({user_id})\n📱 {platform}\n🔗 {url[:50]}..."
-        )
+        await message.forward(LOG_CHANNEL_ID)
     except:
         pass
 
@@ -117,20 +114,20 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             with open(file_path, 'rb') as f:
                 if size_mb < 49:
-                    await update.message.reply_video(
+                    sent_msg = await update.message.reply_video(
                         f, caption=caption, parse_mode='Markdown',
                         read_timeout=120, write_timeout=120
                     )
                 elif size_mb < 2000:
-                    await update.message.reply_document(
-                        f, caption=caption + "\n📦 (File - too large for video)",
+                    sent_msg = await update.message.reply_document(
+                        f, caption=caption + "\n📦 (Sent as file)",
                         parse_mode='Markdown', read_timeout=180, write_timeout=180
                     )
                 else:
                     await status.edit_text("❌ Too large (>2GB)")
                     return
             
-            await log_to_channel(context, user_id, username, platform, url)
+            await log_to_channel(context, sent_msg)
             await status.delete()
             
         except Exception as e:
@@ -143,7 +140,6 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     
-    # POLLING - Simple and reliable
     logger.info("Bot starting with polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
