@@ -100,54 +100,58 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
-            
+
             files = [f for f in os.listdir(tmpdir) if f.startswith('video')]
+
             if not files:
                 raise Exception("No file")
-            
+
             file_path = os.path.join(tmpdir, files[0])
+
             size_mb = os.path.getsize(file_path) / 1024 / 1024
-            
+
             elapsed = round(time.time() - start_time, 1)
+
             caption = f"📱 *{platform}*\n⏱️ {elapsed}s 🔥\n🤖 @Insta_Reel_Downloaderbot"
-            
+
             await status.edit_text("✅ Sending...")
-            
 
-with open(file_path, 'rb') as f:
-    if size_mb < 49:
-        sent_msg = await update.message.reply_video(
-            f,
-            caption=caption,
-            parse_mode='Markdown',
-            read_timeout=120,
-            write_timeout=120
-        )
+            with open(file_path, 'rb') as f:
 
-    elif size_mb < 2000:
-        sent_msg = await update.message.reply_document(
-            f,
-            caption=caption + "\n📦 (Sent as file)",
-            parse_mode='Markdown',
-            read_timeout=180,
-            write_timeout=180
-        )
+                if size_mb < 49:
+                    sent_msg = await update.message.reply_video(
+                        f,
+                        caption=caption,
+                        parse_mode='Markdown',
+                        read_timeout=120,
+                        write_timeout=120
+                    )
 
-    else:
-        await status.edit_text("❌ Too large (>2GB)")
-        return
+                elif size_mb < 2000:
+                    sent_msg = await update.message.reply_document(
+                        f,
+                        caption=caption + "\n📦 (Sent as file)",
+                        parse_mode='Markdown',
+                        read_timeout=180,
+                        write_timeout=180
+                    )
 
-await log_to_channel(context, update.message, sent_msg)
+                else:
+                    await status.edit_text("❌ Too large (>2GB)")
+                    return
 
-try:
-    await status.delete()
+            await log_to_channel(context, update.message, sent_msg)
 
-except:
-    pass
-            
-except Exception as e:
-    logger.error(f"Error: {e}")
-    await status.edit_text("❌ Failed! Try another link.")
+            try:
+                await status.delete()
+
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"Error: {e}")
+
+            await status.edit_text("❌ Failed! Try another link.")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
