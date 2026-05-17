@@ -87,10 +87,19 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     status = await update.message.reply_text("⏳ Downloading...")
     
+    platform = get_platform(url)
+    
     with tempfile.TemporaryDirectory() as tmpdir:
+        # Smart quality selection based on platform
+        if 'YouTube' in platform:
+            # For YouTube: try to stay under 50MB, fallback to lower quality
+            format_string = 'best[filesize<48M]/bestvideo[height<=720][filesize<48M]+bestaudio/best[height<=480]'
+        else:
+            format_string = 'best[filesize<48M]/best'
+        
         opts = {
             'outtmpl': f'{tmpdir}/video.%(ext)s',
-            'format': 'best[filesize<48M]/best',
+            'format': format_string,
             'quiet': True,
         }
         
@@ -103,26 +112,34 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise Exception("No file")
             
             file_path = os.path.join(tmpdir, files[0])
-            size = os.path.getsize(file_path) / 1024 / 1024
+            size_mb = os.path.getsize(file_path) / 1024 / 1024
             
-            if size > 49:
-                await status.edit_text("❌ Too large (>50MB)")
-                return
-            
-            platform = get_platform(url)
             elapsed = round(time.time() - start_time, 1)
             caption = f"📱 *{platform}*\n⏱️ {elapsed}s 🔥\n🤖 @Insta_Reel_Downloaderbot"
             
             await status.edit_text("✅ Sending...")
             
+            # Smart sending: video if <50MB, file if larger
             with open(file_path, 'rb') as f:
-                await update.message.reply_video(
-                    f,
-                    caption=caption,
-                    parse_mode='Markdown',
-                    read_timeout=60,
-                    write_timeout=60
-                )
+                if size_mb < 49:
+                    await update.message.reply_video(
+                        f,
+                        caption=caption,
+                        parse_mode='Markdown',
+                        read_timeout=120,
+                        write_timeout=120
+                    )
+                elif size_mb < 2000:  # Telegram max file size is 2GB
+                    await update.message.reply_document(
+                        f,
+                        caption=caption + "\n📦 (Sent as file - too large for video)",
+                        parse_mode='Markdown',
+                        read_timeout=180,
+                        write_timeout=180
+                    )
+                else:
+                    await status.edit_text("❌ Too large (>2GB)")
+                    return
             
             await log_to_channel(context, user_id, username, platform, url)
             await status.delete()
