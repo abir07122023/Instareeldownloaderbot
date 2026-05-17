@@ -10,7 +10,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 ADMIN_ID = 6294267891
 LOG_CHANNEL_ID = -1003744819617
 
@@ -27,8 +26,8 @@ async def log_to_channel(context, user_id, username, platform, url):
             LOG_CHANNEL_ID,
             f"📊 New download:\n👤 {username} ({user_id})\n📱 {platform}\n🔗 {url[:50]}..."
         )
-    except Exception as e:
-        logger.error(f"Channel log error: {e}")
+    except:
+        pass
 
 SUPPORTED = [
     'instagram.com', 'tiktok.com', 'twitter.com', 'x.com',
@@ -56,7 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         "📥 *Video Downloader Bot*\n\n"
-        "Send video links from:\n"
+        "Send links from:\n"
         "📷 Instagram • 🎵 TikTok • ▶️ YouTube\n"
         "👍 Facebook • 🐦 Twitter\n\n"
         "Just paste a link! 🚀",
@@ -86,20 +85,17 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     status = await update.message.reply_text("⏳ Downloading...")
-    
     platform = get_platform(url)
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Smart quality selection based on platform
         if 'YouTube' in platform:
-            # For YouTube: try to stay under 50MB, fallback to lower quality
-            format_string = 'best[filesize<48M]/bestvideo[height<=720][filesize<48M]+bestaudio/best[height<=480]'
+            format_str = 'best[filesize<48M]/bestvideo[height<=720][filesize<48M]+bestaudio/best[height<=480]'
         else:
-            format_string = 'best[filesize<48M]/best'
+            format_str = 'best[filesize<48M]/best'
         
         opts = {
             'outtmpl': f'{tmpdir}/video.%(ext)s',
-            'format': format_string,
+            'format': format_str,
             'quiet': True,
         }
         
@@ -119,23 +115,16 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await status.edit_text("✅ Sending...")
             
-            # Smart sending: video if <50MB, file if larger
             with open(file_path, 'rb') as f:
                 if size_mb < 49:
                     await update.message.reply_video(
-                        f,
-                        caption=caption,
-                        parse_mode='Markdown',
-                        read_timeout=120,
-                        write_timeout=120
+                        f, caption=caption, parse_mode='Markdown',
+                        read_timeout=120, write_timeout=120
                     )
-                elif size_mb < 2000:  # Telegram max file size is 2GB
+                elif size_mb < 2000:
                     await update.message.reply_document(
-                        f,
-                        caption=caption + "\n📦 (Sent as file - too large for video)",
-                        parse_mode='Markdown',
-                        read_timeout=180,
-                        write_timeout=180
+                        f, caption=caption + "\n📦 (File - too large for video)",
+                        parse_mode='Markdown', read_timeout=180, write_timeout=180
                     )
                 else:
                     await status.edit_text("❌ Too large (>2GB)")
@@ -154,12 +143,9 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080)),
-        url_path=BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-    )
+    # POLLING - Simple and reliable
+    logger.info("Bot starting with polling...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
