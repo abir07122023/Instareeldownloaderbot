@@ -1,179 +1,148 @@
 import os
-import time
 import logging
-import threading
 import tempfile
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import yt_dlp
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import time
+from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+import yt_dlp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+ADMIN_ID = 6294267891
+LOG_CHANNEL_ID = -1003744819617
+
+def log_user(user_id, username):
+    try:
+        with open('/tmp/users.txt', 'a') as f:
+            f.write(f"{user_id}|{username}\n")
+    except:
+        pass
+
+async def log_to_channel(context, user_id, username, platform, url):
+    try:
+        await context.bot.send_message(
+            LOG_CHANNEL_ID,
+            f"📊 New download:\n👤 {username} ({user_id})\n📱 {platform}\n🔗 {url[:50]}..."
+        )
+    except Exception as e:
+        logger.error(f"Channel log error: {e}")
 
 SUPPORTED = [
     'instagram.com', 'tiktok.com', 'twitter.com', 'x.com',
-    'youtube.com', 'youtu.be', 'facebook.com', 'fb.watch',
-    'reddit.com', 'linkedin.com', 'pinterest.com', 'vm.tiktok.com'
+    'youtube.com', 'youtu.be', 'youtube.com/shorts',
+    'facebook.com', 'fb.watch', 'reddit.com', 'vm.tiktok.com'
 ]
 
 PLATFORM_NAMES = {
     'instagram.com': 'Instagram', 'tiktok.com': 'TikTok', 'vm.tiktok.com': 'TikTok',
     'twitter.com': 'Twitter', 'x.com': 'Twitter', 'youtube.com': 'YouTube',
-    'youtu.be': 'YouTube', 'facebook.com': 'Facebook', 'fb.watch': 'Facebook',
-    'reddit.com': 'Reddit', 'linkedin.com': 'LinkedIn', 'pinterest.com': 'Pinterest',
+    'youtu.be': 'YouTube', 'youtube.com/shorts': 'YouTube', 'facebook.com': 'Facebook',
+    'fb.watch': 'Facebook', 'reddit.com': 'Reddit',
 }
 
 def get_platform(url):
-    for domain, name in PLATFORM_NAMES.items():
-        if domain in url:
-            return name
+    for d, n in PLATFORM_NAMES.items():
+        if d in url:
+            return n
     return "Video"
 
-async def check_membership(user_id, context):
-    if not CHANNEL_USERNAME:
-        return True
-    try:
-        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except:
-        return True
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or "no_username"
+    log_user(user_id, username)
+    
     await update.message.reply_text(
         "📥 *Video Downloader Bot*\n\n"
-        "Send a video link from:\n"
-        "• Instagram • TikTok • YouTube\n"
-        "• Facebook • Twitter/X\n"
-        "• Reddit • Pinterest • LinkedIn\n\n"
-        "Unlimited & Free! 🚀",
+        "Send video links from:\n"
+        "📷 Instagram • 🎵 TikTok • ▶️ YouTube\n"
+        "👍 Facebook • 🐦 Twitter\n\n"
+        "Just paste a link! 🚀",
         parse_mode='Markdown'
     )
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
+    
+    try:
+        with open('/tmp/users.txt', 'r') as f:
+            users = set(line.split('|')[0] for line in f if line.strip())
+        await update.message.reply_text(f"📊 Total users: {len(users)}")
+    except:
+        await update.message.reply_text("📊 Total users: 0")
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     user_id = update.message.from_user.id
+    username = update.message.from_user.username or "no_username"
+    log_user(user_id, username)
+    
     start_time = time.time()
     
     if not any(d in url for d in SUPPORTED):
-        await update.message.reply_text(
-            "❌ Send a valid link!\n\n"
-            "Supported: Instagram, TikTok, YouTube, Facebook, Twitter, Reddit"
-        )
         return
-
-    if CHANNEL_USERNAME:
-        is_member = await check_membership(user_id, context)
-        if not is_member:
-            keyboard = [[InlineKeyboardButton(
-                "📣 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            )]]
-            await update.message.reply_text(
-                "❌ Join our channel first!",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-
-    platform = get_platform(url)
-    status_msg = await update.message.reply_text("⏳ Processing...")
     
-    ydl_opts = {
-        'format': 'best[ext=mp4][filesize<48M]/best[filesize<48M]/best',
-        'quiet': True,
-        'no_warnings': True,
-    }
+    status = await update.message.reply_text("⏳ Downloading...")
     
-    try:
-        # Extract video info WITHOUT downloading
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        opts = {
+            'outtmpl': f'{tmpdir}/video.%(ext)s',
+            'format': 'best[filesize<48M]/best',
+            'quiet': True,
+        }
         
-        # Get direct video URL
-        video_url = info.get('url')
-        title = info.get('title', 'Video')
-        
-        if not video_url:
-            raise ValueError("No video URL found")
-        
-        await status_msg.edit_text("✅ Sending video...")
-        elapsed = round(time.time() - start_time, 1)
-        caption = f"📱 *{platform}*\n⏱ {elapsed}s 🔥\n🤖 @InstaReelDownloaderBot"
-        
-        # Method 1: Try sending direct URL (FAST - no download)
         try:
-            await update.message.reply_video(
-                video_url,
-                caption=caption,
-                parse_mode='Markdown',
-                read_timeout=30,
-                write_timeout=30
-            )
-            await status_msg.delete()
-            logger.info(f"✅ Direct URL worked for {platform}")
-            return
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
             
-        except Exception as url_error:
-            logger.warning(f"Direct URL failed: {url_error}, trying download method...")
+            files = [f for f in os.listdir(tmpdir) if f.startswith('video')]
+            if not files:
+                raise Exception("No file")
             
-            # Method 2: Fallback - Download to server (SLOW but reliable)
-            with tempfile.TemporaryDirectory() as tmpdir:
-                ydl_opts['outtmpl'] = f'{tmpdir}/video.%(ext)s'
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.extract_info(url, download=True)
-                
-                files = [f for f in os.listdir(tmpdir) if f.startswith('video.')]
-                if not files:
-                    raise FileNotFoundError("Download failed")
-                
-                filename = os.path.join(tmpdir, files[0])
-                file_size = os.path.getsize(filename) / (1024 * 1024)
-                
-                if file_size > 49:
-                    await status_msg.edit_text("❌ Video too large (>50MB)")
-                    return
-                
-                with open(filename, 'rb') as f:
-                    await update.message.reply_video(
-                        f,
-                        caption=caption,
-                        parse_mode='Markdown',
-                        read_timeout=60
-                    )
-                
-                await status_msg.delete()
-                logger.info(f"✅ Download method worked for {platform}")
-    
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await status_msg.edit_text(
-            "❌ Failed!\n"
-            "Video may be private, age-restricted, or region-blocked."
-        )
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, *args):
-        pass
-
-def run_health_server():
-    HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), HealthHandler).serve_forever()
+            file_path = os.path.join(tmpdir, files[0])
+            size = os.path.getsize(file_path) / 1024 / 1024
+            
+            if size > 49:
+                await status.edit_text("❌ Too large (>50MB)")
+                return
+            
+            platform = get_platform(url)
+            elapsed = round(time.time() - start_time, 1)
+            caption = f"📱 *{platform}*\n⏱️ {elapsed}s 🔥\n🤖 @Insta_Reel_Downloaderbot"
+            
+            await status.edit_text("✅ Sending...")
+            
+            with open(file_path, 'rb') as f:
+                await update.message.reply_video(
+                    f,
+                    caption=caption,
+                    parse_mode='Markdown',
+                    read_timeout=60,
+                    write_timeout=60
+                )
+            
+            await log_to_channel(context, user_id, username, platform, url)
+            await status.delete()
+            
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            await status.edit_text("❌ Failed! Try another link.")
 
 def main():
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN not set!")
-    threading.Thread(target=run_health_server, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-    logger.info("Bot started!")
-    app.run_polling()
+    
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        url_path=BOT_TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    )
 
 if __name__ == '__main__':
     main()
