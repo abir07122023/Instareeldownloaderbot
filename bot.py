@@ -113,26 +113,37 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await status.edit_text("✅ Sending...")
             
-            with open(file_path, 'rb') as f:
-                if size_mb < 49:
-                    sent_msg = await update.message.reply_video(
-                        f, caption=caption, parse_mode='Markdown',
-                        read_timeout=120, write_timeout=120
-                    )
-                elif size_mb < 2000:
-                    sent_msg = await update.message.reply_document(
-                        f, caption=caption + "\n📦 (Sent as file)",
-                        parse_mode='Markdown', read_timeout=180, write_timeout=180
-                    )
-                else:
-                    await status.edit_text("❌ Too large (>2GB)")
-                    return
-            
-        await log_to_channel(context, update.message, sent_msg)
-            try:
-                await status.delete()
-            except:
-                pass
+
+with open(file_path, 'rb') as f:
+    if size_mb < 49:
+        sent_msg = await update.message.reply_video(
+            f,
+            caption=caption,
+            parse_mode='Markdown',
+            read_timeout=120,
+            write_timeout=120
+        )
+
+    elif size_mb < 2000:
+        sent_msg = await update.message.reply_document(
+            f,
+            caption=caption + "\n📦 (Sent as file)",
+            parse_mode='Markdown',
+            read_timeout=180,
+            write_timeout=180
+        )
+
+    else:
+        await status.edit_text("❌ Too large (>2GB)")
+        return
+
+await log_to_channel(context, update.message, sent_msg)
+
+try:
+    await status.delete()
+
+except:
+    pass
             
         except Exception as e:
             logger.error(f"Error: {e}")
