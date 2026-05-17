@@ -128,11 +128,11 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await status.edit_text("❌ Too large (>2GB)")
                     return
             
-           await log_to_channel(context, update.message, sent_msg)
-        try:
-           await status.delete()
-             except:
-              pass
+        await log_to_channel(context, update.message, sent_msg)
+            try:
+                await status.delete()
+            except:
+                pass
             
         except Exception as e:
             logger.error(f"Error: {e}")
